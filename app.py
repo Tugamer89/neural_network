@@ -36,13 +36,11 @@ def select_images_from_mnist_png(base_dir, max_per_class=None, shuffle=True):
 
 def main():
     print("Starting app.py — MNIST trainer + drawer integration")
-    root = tk.Tk()
-    root.withdraw()
     net = Neural_Network()
 
     while True:
         print("\nOptions:")
-        print(" 1) Load model from JSON")
+        print(" 1) Load model")
         print(" 2) Train model on MNIST PNG folder")
         print(" 3) Quick test on testing folder")
         print(" 4) Manual test with drawer")
@@ -52,7 +50,7 @@ def main():
         choice = input("Choose: ").strip()
 
         if choice == "1":
-            fp = filedialog.askopenfilename(title="Load model JSON", filetypes=[("JSON", "*.json")])
+            fp = filedialog.askopenfilename(title="Load model", filetypes=[("NumPy compressed", "*.npz")])
             if fp:
                 try:
                     net.load(fp)
@@ -111,16 +109,19 @@ def main():
             print("Opening interactive drawer...")
             def on_draw(image_28x28):
                 arr = image_28x28.flatten().reshape(1, -1)
-                pred = net.evaluate(arr)
+                pred, conf = net.evaluate(arr)
                 drawer.set_prediction(pred[0])
+                drawer.set_confidence(conf[0])
 
+            root = tk.Tk()
+            root.withdraw()
             drawer = Drawer(root, on_draw_callback=on_draw)
             root.deiconify()
             root.mainloop()
 
         elif choice == "5":
-            fname = f"save-{net.history.get('accuracy',[-1])[-1] if net.history.get('accuracy') else 0:.4f}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            fp = filedialog.asksaveasfilename(defaultextension=".json", initialfile=fname, filetypes=[("JSON","*.json")])
+            fname = f"save-{net.history.get('accuracy',[-1])[-1] if net.history.get('accuracy') else 0:.4f}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
+            fp = filedialog.asksaveasfilename(defaultextension=".npz", initialfile=fname, filetypes=[("NumPy compressed", "*.npz")])
             if fp:
                 try:
                     net.save(fp)

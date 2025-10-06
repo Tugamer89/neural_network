@@ -1,4 +1,4 @@
-import time, json, random
+import time, random
 import numpy as np
 from base import *
 import matplotlib.pyplot as plt
@@ -191,9 +191,9 @@ class Neural_Network():
             epoch_acc = epoch_correct / epoch_seen
             epoch_time = time.time() - epoch_start
 
-            self.history.setdefault('loss', []).append(epoch_loss)
-            self.history.setdefault('accuracy', []).append(epoch_acc)
-            self.history.setdefault('epoch_time', []).append(epoch_time)
+            self.history['loss'].append(epoch_loss)
+            self.history['accuracy'].append(epoch_acc)
+            self.history['epoch_time'].append(epoch_time)
 
             # validation
             val_acc, val_loss = (None, None)
@@ -245,80 +245,76 @@ class Neural_Network():
         if isinstance(inputs, np.ndarray):
             inputs = cp.asarray(inputs)
         self.forward(inputs, training=False)
-        predictions = cp.argmax(self.activation_last.output, axis=1)
-        return cp.asnumpy(predictions)
+        
+        probs = self.activation_last.output
+        predictions = cp.argmax(probs, axis=1)
+        confidences = cp.max(probs, axis=1)
+        
+        return cp.asnumpy(predictions), cp.asnumpy(confidences)
 
     # --- save ---
     def save(self, path):
-        def to_serializable(obj):
-            if isinstance(obj, (float, int, str, bool)) or obj is None:
-                return obj
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            if isinstance(obj, cp.ndarray):
-                return cp.asnumpy(obj).tolist()
-            if isinstance(obj, (list, tuple)):
-                return [to_serializable(x) for x in obj]
-            if isinstance(obj, dict):
-                return {k: to_serializable(v) for k, v in obj.items()}
-            return str(obj)
+        arrays = {}
 
-        data = {
-            'history': to_serializable(self.history),
-            'optimizer': {
-                'current_learning_rate': getattr(self.optimizer, 'current_learning_rate', None),
-                'iterations': getattr(self.optimizer, 'iterations', None)
-            },
-            'layers': []
-        }
+        def to_numpy(x):
+            if isinstance(x, cp.ndarray):
+                return x.get()
+            if isinstance(x, (cp.generic, np.ndarray, int, float)):
+                return np.array(x)
+            if isinstance(x, (list, tuple)):
+                return np.array([to_numpy(el) for el in x])
+            raise ValueError(f"Object not serializable: {type(x)}")
 
-        for layer in self.layers:
-            layer_data = {
-                'class': layer.__class__.__name__,
-                'params': {}
-            }
+        for i, layer in enumerate(self.layers):
+            prefix = f"layer{i}_"
 
-            for k, v in layer.__dict__.items():
-                if any(x in k for x in [
-                    'inputs', 'output', 'dinputs', 'dweights', 'dbiases',
-                    'binary_mask', 'norm', 'cols'
-                ]):
-                    continue
-                layer_data['params'][k] = to_serializable(v)
+            for attr in ["weights", "biases", "gamma", "beta",
+                         "running_mean", "running_var",
+                         "weight_momentums", "bias_momentums",
+                         "weight_cache", "bias_cache"]:
+                if hasattr(layer, attr):
+                    value = getattr(layer, attr)
+                    if value is not None:
+                        arrays[prefix + attr] = to_numpy(value)
 
-            data['layers'].append(layer_data)
+        arrays["optimizer_iterations"] = to_numpy(self.optimizer.iterations)
+        arrays["optimizer_lr"] = to_numpy(self.optimizer.current_learning_rate)
 
-        with open(path, 'w') as f:
-            json.dump(data, f, separators=(',', ': '))
+        arrays["history_loss"] = to_numpy(self.history["loss"])
+        arrays["history_acc"] = to_numpy(self.history["accuracy"])
+        arrays["history_time"] = to_numpy(self.history["epoch_time"])
 
-    # --- load ---
+        np.savez_compressed(path, **arrays)
+
     def load(self, path):
-        def to_array(x):
-            if isinstance(x, list):
-                return cp.asarray(np.array(x, dtype=np.float32))
+        data = np.load(path, allow_pickle=True)
+
+        def to_cupy(x):
+            if isinstance(x, np.ndarray):
+                return cp.asarray(x)
             return x
 
-        with open(path, 'r') as f:
-            data = json.load(f)
+        for i, layer in enumerate(self.layers):
+            prefix = f"layer{i}_"
+            for attr in ["weights", "biases", "gamma", "beta",
+                         "running_mean", "running_var",
+                         "weight_momentums", "bias_momentums",
+                         "weight_cache", "bias_cache"]:
+                key = prefix + attr
+                if key in data:
+                    value = data[key]
+                    if np.isscalar(value) or value.shape == ():
+                        value = value.item()
+                    setattr(layer, attr, to_cupy(value))
 
-        self.history = data.get('history', self.history)
-        opt = data.get('optimizer', {})
-        self.optimizer.current_learning_rate = opt.get('current_learning_rate', self.optimizer.current_learning_rate)
-        self.optimizer.iterations = opt.get('iterations', self.optimizer.iterations)
+        if "optimizer_iterations" in data:
+            self.optimizer.iterations = int(data["optimizer_iterations"])
+        if "optimizer_lr" in data:
+            self.optimizer.current_learning_rate = float(data["optimizer_lr"])
 
-        layers_data = data.get('layers', [])
-        if not hasattr(self, 'layers'):
-            print("Warning: no self.layers found in model class.")
-            return
-
-        if len(layers_data) != len(self.layers):
-            print(f"Layer count mismatch: saved={len(layers_data)}, current={len(self.layers)}")
-
-        for saved_layer, layer in zip(layers_data, self.layers):
-            params = saved_layer.get('params', {})
-            for k, v in params.items():
-                arr = to_array(v)
-                setattr(layer, k, arr)
+        self.history["loss"] = data.get("history_loss", np.array([])).tolist()
+        self.history["accuracy"] = data.get("history_acc", np.array([])).tolist()
+        self.history["epoch_time"] = data.get("history_time", np.array([])).tolist()
 
     # --- plot ---
     def plot_history(self, save_path="training_history.png"):
