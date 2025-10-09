@@ -227,6 +227,7 @@ class Neural_Network():
                         old_lr = self.optimizer.learning_rate
                         new_lr = max(old_lr * 0.5, 1e-5)
                         self.optimizer.learning_rate = new_lr
+                        no_improve_epochs = 0
                         print(f"Validation plateau — reducing learning rate: {old_lr:.6f} → {new_lr:.6f}")
 
                 # Early stopping
