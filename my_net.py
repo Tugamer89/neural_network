@@ -49,7 +49,12 @@ class Neural_Network():
         self.layer_last = Layer_Dense(128, 10)
         self.activation_last = Activation_SoftMax()
 
-        self.layers = [self.layer_dense1, self.layer_last]
+        self.layers = [
+            self.conv1,
+            self.conv2,
+            self.layer_dense1,
+            self.layer_last
+        ]
         self.history = {'loss': [], 'accuracy': [], 'epoch_time': []}
 
     # --- full forward ---
@@ -217,7 +222,7 @@ class Neural_Network():
                     no_improve_epochs += 1
 
                 # Reduce LR on plateau
-                if no_improve_epochs == patience // 2:
+                if no_improve_epochs >= int(patience * 0.75):
                     if hasattr(self.optimizer, 'learning_rate'):
                         old_lr = self.optimizer.learning_rate
                         new_lr = max(old_lr * 0.5, 1e-5)
@@ -277,8 +282,10 @@ class Neural_Network():
                     if value is not None:
                         arrays[prefix + attr] = to_numpy(value)
 
+        arrays["optimizer_learning_rate"] = to_numpy(self.optimizer.learning_rate)
+        arrays["optimizer_current_lr"] = to_numpy(self.optimizer.current_learning_rate)
+        arrays["optimizer_decay"] = to_numpy(self.optimizer.decay)
         arrays["optimizer_iterations"] = to_numpy(self.optimizer.iterations)
-        arrays["optimizer_lr"] = to_numpy(self.optimizer.current_learning_rate)
 
         arrays["history_loss"] = to_numpy(self.history["loss"])
         arrays["history_acc"] = to_numpy(self.history["accuracy"])
@@ -305,12 +312,22 @@ class Neural_Network():
                     value = data[key]
                     if np.isscalar(value) or value.shape == ():
                         value = value.item()
+                    
+                    if hasattr(layer, attr):
+                        expected_shape = getattr(layer, attr).shape
+                        if value.shape != expected_shape:
+                            print(f"Shape mismatch for {key}: expected {expected_shape}, got {value.shape}")
+                        
                     setattr(layer, attr, to_cupy(value))
 
+        if "optimizer_learning_rate" in data:
+            self.optimizer.learning_rate = float(data["optimizer_learning_rate"])
+        if "optimizer_current_lr" in data:
+            self.optimizer.current_learning_rate = float(data["optimizer_current_lr"])
+        if "optimizer_decay" in data:
+            self.optimizer.decay = float(data["optimizer_decay"])
         if "optimizer_iterations" in data:
             self.optimizer.iterations = int(data["optimizer_iterations"])
-        if "optimizer_lr" in data:
-            self.optimizer.current_learning_rate = float(data["optimizer_lr"])
 
         self.history["loss"] = data.get("history_loss", np.array([])).tolist()
         self.history["accuracy"] = data.get("history_acc", np.array([])).tolist()
