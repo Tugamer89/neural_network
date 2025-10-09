@@ -18,25 +18,33 @@ class Drawer:
         self.pixel_size = 10
         self.image = np.zeros((28, 28), dtype=np.float32)
 
-        # Canvas
-        self.canvas = tk.Canvas(root, bg='black', width=self.canvas_size, height=self.canvas_size)
-        self.canvas.pack()
+        self.root.title("MNIST Drawer")
+        self.root.configure(bg="#1e1e1e")
 
-        # Bind mouse
+        title = tk.Label(root, text="Draw a Digit", bg="#1e1e1e", fg="#FFFFFF", font=("Segoe UI", 18, "bold"))
+        title.pack(pady=8)
+
+        self.canvas = tk.Canvas(root, bg="black", width=self.canvas_size, height=self.canvas_size, highlightthickness=2, highlightbackground="#444444")
+        self.canvas.pack(pady=8)
+
         self.canvas.bind("<B1-Motion>", self.paint_white)
         self.canvas.bind("<B3-Motion>", self.paint_black)
 
-        # Prediction label
-        self.pred_label = tk.Label(root, text="Draw a digit", fg="black", font=("Arial", 16))
-        self.pred_label.pack(pady=8)
+        self.pred_label = tk.Label(root, text="Prediction: ?", bg="#1e1e1e", fg="#00d2ff", font=("Consolas", 14))
+        self.pred_label.pack(pady=(5, 2))
 
-        # Confidence label
-        self.conf_label = tk.Label(root, text="", fg="black", font=("Arial", 16))
-        self.conf_label.pack(pady=4)
+        self.conf_label = tk.Label(root, text="", bg="#1e1e1e", fg="#aaaaaa", font=("Consolas", 12))
+        self.conf_label.pack(pady=(0, 10))
 
-        # Reset button
-        self.reset_button = tk.Button(root, text="Reset", command=self.reset_canvas, bg="gray20", fg="white")
-        self.reset_button.pack(pady=4)
+        btn_frame = tk.Frame(root, bg="#1e1e1e")
+        btn_frame.pack(pady=6)
+
+        def create_button(text, cmd, color="#2a2a2a"):
+            return tk.Button(btn_frame, text=text, command=cmd,
+                             bg=color, fg="white", activebackground="#333333",
+                             relief="flat", font=("Segoe UI", 10), width=14, height=1)
+
+        create_button("Reset", self.reset_canvas, "#444444").grid(row=0, column=0, padx=5)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -91,7 +99,7 @@ class Drawer:
     def reset_canvas(self):
         self.canvas.delete("all")
         self.image.fill(0)
-        self.pred_label.config(text="Draw a digit")
+        self.pred_label.config(text="Prediction: ?")
         self.conf_label.config(text="")
 
     def set_prediction(self, pred):
