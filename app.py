@@ -1,5 +1,5 @@
 import os
-import cupy as np
+import numpy as np
 import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageOps
@@ -64,7 +64,7 @@ def main():
                 print("Path does not exist:", train_path)
                 continue
 
-            # carichiamo i dati senza duplicarli
+            print("Loading images...")
             X, y = select_images_from_mnist_png(train_path)
             val_frac = 0.1
             n_val = int(len(X) * val_frac)

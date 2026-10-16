@@ -1,50 +1,73 @@
 import time, random
+import concurrent.futures
 import numpy as np
+import cupy as cp
+import cupyx.scipy.ndimage as ndimage
 from base import *
 import matplotlib.pyplot as plt
 from PIL import Image, ImageOps
 
 def augment_image(img_arr):
-    if hasattr(img_arr, "get"):
-        img_arr = img_arr.get()
-    
-    img = Image.fromarray((img_arr.reshape(28,28)*255).astype(cp.uint8))
+    img = Image.fromarray((img_arr.reshape(28, 28) * 255).astype(np.uint8))
 
     angle = random.uniform(-10, 10)
-    random.gauss(0, 1)
     img = img.rotate(angle)
 
+    # Shift
     max_shift = 2
     tx, ty = random.randint(-max_shift, max_shift), random.randint(-max_shift, max_shift)
     img = ImageOps.expand(img, border=max_shift, fill=0)
-    img = img.crop((max_shift+tx, max_shift+ty,
-                    max_shift+tx+28, max_shift+ty+28))
+    img = img.crop((max_shift + tx, max_shift + ty,
+                    max_shift + tx + 28, max_shift + ty + 28))
 
+    # Zoom
     zoom = random.uniform(0.9, 1.1)
-    size = int(28*zoom)
+    size = int(28 * zoom)
     img = img.resize((size, size), Image.BICUBIC)
-    img = ImageOps.fit(img, (28,28), Image.BICUBIC)
+    img = ImageOps.fit(img, (28, 28), Image.BICUBIC)
 
     return np.array(img, dtype=np.float32).flatten() / 255.0
+
+def augment_batch_gpu(X_batch_gpu):
+    batch_size = X_batch_gpu.shape[0]
+    X_2d = X_batch_gpu.reshape(batch_size, 28, 28)
+    
+    angles = cp.random.uniform(-15, 15, size=batch_size)
+    shifts_y = cp.random.uniform(-3, 3, size=batch_size)
+    shifts_x = cp.random.uniform(-3, 3, size=batch_size)
+    
+    out_batch = cp.empty_like(X_2d)
+    
+    for i in range(batch_size):
+        img = ndimage.rotate(X_2d[i], angles[i], reshape=False, order=1)
+        img = ndimage.shift(img, (shifts_y[i], shifts_x[i]), order=1)
+        out_batch[i] = img
+        
+    return out_batch.reshape(batch_size, -1)
+
+def augment_batch_cpu(X_batch_cpu):
+    augmented = [augment_image(x) for x in X_batch_cpu]
+    
+    return cp.asarray(augmented, dtype=cp.float32)
 
 class Neural_Network():
     def __init__(self):
         self.loss_function = Activation_SoftMax_Loss_CatEntropy()
-        self.optimizer = Optimizer_Adam(learning_rate=0.002, decay=1e-5)
+        self.optimizer = Optimizer_Adam(learning_rate=0.001, decay=1e-5)
 
         # CNN layers
-        self.conv1 = Layer_Conv2D(n_filters=32, filter_size=3, input_depth=1, stride=1, padding=1)
+        self.conv1 = Layer_Conv2D(n_filters=64, filter_size=3, input_depth=1, stride=1, padding=1)
         self.act1 = Activation_ReLU()
         self.pool1 = Layer_MaxPool2D(2,2)
 
-        self.conv2 = Layer_Conv2D(n_filters=64, filter_size=3, input_depth=32, stride=1, padding=1)
+        self.conv2 = Layer_Conv2D(n_filters=128, filter_size=3, input_depth=64, stride=1, padding=1)
         self.act2 = Activation_ReLU()
         self.pool2 = Layer_MaxPool2D(2,2)
 
         # Dense layers
-        self.layer_dense1 = Layer_Dense(64*7*7, 128, weight_regularizer_l2=0.001)
+        self.layer_dense1 = Layer_Dense(128*7*7, 128, weight_regularizer_l2=0.001)
         self.activation_dense1 = Activation_ReLU()
-        self.dropout1 = Layer_Dropout(0.3)
+        self.dropout1 = Layer_Dropout(0.4)
 
         self.layer_last = Layer_Dense(128, 10)
         self.activation_last = Activation_SoftMax()
@@ -158,10 +181,14 @@ class Neural_Network():
 
             for start in range(0, n_samples, batch_size):
                 end = min(start + batch_size, n_samples)
-                X_batch, y_batch = X_train[start:end], y_train[start:end]
+                
+                X_batch_cpu = X_train[start:end]
+                y_batch = cp.asarray(y_train[start:end])
 
                 if augment:
-                    X_batch = cp.array([augment_image(x) for x in X_batch], dtype=cp.float32)
+                    X_batch = augment_batch_cpu(X_batch_cpu)
+                else:
+                    X_batch = cp.asarray(X_batch_cpu)
 
                 # forward
                 self.forward(X_batch)
@@ -203,7 +230,9 @@ class Neural_Network():
             # validation
             val_acc, val_loss = (None, None)
             if X_val is not None and y_val is not None:
-                val_acc, val_loss = self.test(X_val, y_val)
+                X_val_gpu = cp.asarray(X_val)
+                y_val_gpu = cp.asarray(y_val)
+                val_acc, val_loss = self.test(X_val_gpu, y_val_gpu)
 
             # log
             if epoch % tracking_interval == 0 or epoch == epochs:

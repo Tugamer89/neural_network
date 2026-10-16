@@ -3,7 +3,8 @@ from scipy.special import expit
 
 class Layer_Dense:
     def __init__(self, n_inputs, n_neurons, weight_regularizer_l1=0, weight_regularizer_l2=0, bias_regularizer_l1=0, bias_regularizer_l2=0):
-        self.weights = 0.01 * cp.random.randn(n_inputs, n_neurons)
+        # He Initialization
+        self.weights = cp.random.randn(n_inputs, n_neurons) * cp.sqrt(2.0 / n_inputs)
         self.biases = cp.zeros((1, n_neurons))
         self.weight_regularizer_l1 = weight_regularizer_l1
         self.weight_regularizer_l2 = weight_regularizer_l2
@@ -307,9 +308,9 @@ class Layer_Conv2D:
         self.stride = stride
         self.padding = padding
         
-        self.weights = weight_scale * cp.random.randn(
-            n_filters, input_depth * filter_size * filter_size
-        )
+        # He Initialization
+        fan_in = input_depth * filter_size * filter_size
+        self.weights = cp.random.randn(n_filters, fan_in) * cp.sqrt(2.0 / fan_in)
         self.biases = cp.zeros((n_filters, 1))
 
     def im2col(self, inputs):
@@ -325,14 +326,11 @@ class Layer_Conv2D:
         else:
             padded = inputs
 
-        cols = cp.zeros((batch_size, out_H, out_W, depth, f, f))
-        for i in range(out_H):
-            for j in range(out_W):
-                cols[:, i, j, :, :, :] = padded[:, :,
-                                                i*s:i*s+f,
-                                                j*s:j*s+f]
-
-        cols = cols.reshape(batch_size*out_H*out_W, -1)
+        shape = (batch_size, depth, out_H, out_W, f, f)
+        strides = (padded.strides[0], padded.strides[1], padded.strides[2]*s, padded.strides[3]*s, padded.strides[2], padded.strides[3])
+        
+        cols = cp.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)
+        cols = cols.transpose(0, 2, 3, 1, 4, 5).reshape(batch_size * out_H * out_W, -1)
         return cols, out_H, out_W
 
     def col2im(self, dcols, input_shape, out_H, out_W):
@@ -342,16 +340,16 @@ class Layer_Conv2D:
 
         if self.padding > 0:
             H_p, W_p = H + 2*self.padding, W + 2*self.padding
-            dinputs_padded = cp.zeros((batch_size, depth, H_p, W_p))
         else:
             H_p, W_p = H, W
-            dinputs_padded = cp.zeros((batch_size, depth, H, W))
-
+            
+        dinputs_padded = cp.zeros((batch_size, depth, H_p, W_p), dtype=dcols.dtype)
         dcols_reshaped = dcols.reshape(batch_size, out_H, out_W, depth, f, f)
+        dcols_reshaped = dcols_reshaped.transpose(0, 3, 1, 2, 4, 5)
 
-        for i in range(out_H):
-            for j in range(out_W):
-                dinputs_padded[:, :, i*s:i*s+f, j*s:j*s+f] += dcols_reshaped[:, i, j]
+        for i in range(f):
+            for j in range(f):
+                dinputs_padded[:, :, i:i+out_H*s:s, j:j+out_W*s:s] += dcols_reshaped[:, :, :, :, i, j]
 
         if self.padding > 0:
             return dinputs_padded[:, :, self.padding:-self.padding, self.padding:-self.padding]
@@ -369,7 +367,6 @@ class Layer_Conv2D:
         return self.output
 
     def backward(self, dvalues):
-        #batch_size, _, _, _ = dvalues.shape
         dvalues_reshaped = dvalues.transpose(0,2,3,1).reshape(-1, self.n_filters)
 
         self.dweights = dvalues_reshaped.T @ self.cols
@@ -395,13 +392,11 @@ class Layer_MaxPool2D:
         out_H = (H - p)//s + 1
         out_W = (W - p)//s + 1
 
-        cols = cp.zeros((batch_size, depth, out_H, out_W, p, p))
-        for i in range(out_H):
-            for j in range(out_W):
-                cols[:, :, i, j, :, :] = inputs[:, :,
-                                                i*s:i*s+p,
-                                                j*s:j*s+p]
-        cols = cols.reshape(batch_size*depth*out_H*out_W, p*p)
+        shape = (batch_size, depth, out_H, out_W, p, p)
+        strides = (inputs.strides[0], inputs.strides[1], inputs.strides[2]*s, inputs.strides[3]*s, inputs.strides[2], inputs.strides[3])
+        
+        cols = cp.lib.stride_tricks.as_strided(inputs, shape=shape, strides=strides)
+        cols = cols.reshape(batch_size * depth * out_H * out_W, p * p)
         return cols, out_H, out_W
 
     def col2im(self, dcols, input_shape, out_H, out_W):
@@ -409,12 +404,12 @@ class Layer_MaxPool2D:
         p = self.pool_size
         s = self.stride
 
-        dinputs = cp.zeros((batch_size, depth, H, W))
+        dinputs = cp.zeros((batch_size, depth, H, W), dtype=dcols.dtype)
         dcols_reshaped = dcols.reshape(batch_size, depth, out_H, out_W, p, p)
 
-        for i in range(out_H):
-            for j in range(out_W):
-                dinputs[:, :, i*s:i*s+p, j*s:j*s+p] += dcols_reshaped[:, :, i, j]
+        for i in range(p):
+            for j in range(p):
+                dinputs[:, :, i:i+out_H*s:s, j:j+out_W*s:s] += dcols_reshaped[:, :, :, :, i, j]
         return dinputs
 
     def forward(self, inputs):
